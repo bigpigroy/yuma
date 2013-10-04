@@ -1,0 +1,634 @@
+Option Explicit
+
+' True  = アーリーバインディング(事前バインディング)
+' False = レイトバインディング(実行時バインディング)
+#Const EARLY_BINDING = True
+
+'// HTTP ステータスコード
+Declare Sub Sleep Lib "kernel32" (ByVal dwMilliseconds As Long)
+Private Const HTTP_STATUS_OK = 200&
+
+Private Sub auto_open()
+' 店舗情報キャッシュ用のフィールドをクリア
+ ShopInfo.paramShopCode.Value = ""
+ ShopInfo.txtShopCode.Value = ""
+ ShopInfo.txtShopName.Value = ""
+ ShopInfo.txtFurigana.Value = ""
+ ShopInfo.txtAddress.Value = ""
+ ShopInfo.txtTEL.Value = ""
+ ShopInfo.txtURL.Value = ""
+ 
+End Sub
+
+'***************************************
+' BTMU店舗検索 トップページを取得
+'***************************************
+' 使用するライブラリ
+'----
+' WEBページを取得するために使用
+'WinHttp
+'Microsoft WinHTTP Services, version 5.1
+'----
+' HTMLをハンドリングするために使用
+'MSHTML
+'Microsoft HTML Object Library
+'----
+' 正規表現用
+'VBScript_RegExp_55
+'Microsoft VBScript Regular Expressions 5.5
+'----
+' 文字コード変換用（とりあえず未使用）
+'ADODB
+'Microsoft ActiveX Data Objects 2.8 Library
+'----
+
+
+Public Sub GetBTMUShop()
+
+#If EARLY_BINDING Then
+    Dim http    As WinHttp.WinHttpRequest
+    Dim re      As New RegExp
+    Dim mc      As MatchCollection
+    Dim mcsub   As SubMatches
+    Dim mcsub2   As SubMatches
+    Dim mc2      As Match
+    Dim mc3     As MatchCollection
+    Dim mc4      As Match
+    Dim mc5     As MatchCollection
+    Dim mc6     As Match
+#Else
+    Dim http    As Object
+    Dim re      As Object: Set re = CreateObject("RegExp")
+    Dim mc      As Object
+    Dim mcsub   As Object
+    Dim mcsub2   As Object
+    Dim mc2      As Object
+    Dim mc3      As Object
+    Dim mc4      As Object
+    Dim mc5      As Object
+    Dim mc6      As Object
+#End If
+    Dim sURI    As String
+    Dim sHTML   As String
+    Dim vHTML   As Variant
+    Dim i       As Long
+    Dim vTenban() As Variant
+    Dim vAddress() As Variant
+    Dim vFurigana() As Variant
+    Dim vShopName() As Variant
+    Dim vShopURL() As Variant
+    Dim sShopTEL As String
+    
+    
+    Dim oHTML As MSHTML.HTMLDocument
+    Set oHTML = New MSHTML.HTMLDocument
+    
+    Dim oDocument As MSHTML.HTMLDocument
+    
+    Dim sShopCode As String
+    sShopCode = InputBox("店番を入力してください")
+    
+    ' 対象URLを指定（店番を付加)
+    sURI = "http://sasp.mapion.co.jp/b/bk_mufg/attr/?shop_number=%5E" & sShopCode
+    ' 指定したURLからページを取得
+    Set oDocument = oHTML.createDocumentFromUrl(sURI, vbNullString)
+    ' ステータスがcompleteになるまで待つ
+    Do While oDocument.readyState <> "complete"
+        Application.Wait Now + TimeSerial(0, 0, 1)
+        DoEvents
+    Loop
+    
+    
+    
+    ' Debug.Print oDocument.body.innerHTML
+    '// HTML ソースを変数に格納
+    sHTML = oDocument.body.innerHTML
+    'sHTML = ADOS_Decode_UTF8(oDocument.body.innerHTML)
+
+    ' 各店舗の詳細記述を取得
+    re.Pattern = "<TABLE class=tenpo_detail cellSpacing=0 sizcache=""\d*"" sizset=""\d*"">([\s\S]*?)</TABLE>"
+    ' Global:全件検索
+    re.Global = True
+    ' 正規表現による検索の実行
+    Set mc = re.Execute(sHTML)
+    
+    If mc.Count = 0 Then
+        MsgBox ("店番 " & sShopCode & " の店舗はありません.")
+        Exit Sub
+    End If
+    ' 変数の配列の要素数を設定
+    ReDim vTenban(mc.Count - 1)
+    ReDim vAddress(mc.Count - 1)
+    ReDim vFurigana(mc.Count - 1)
+    ReDim vShopName(mc.Count - 1)
+    ReDim vShopURL(mc.Count - 1)
+    ReDim vshoptel(mc.Count - 1)
+    i = 0
+    ' 検索された件数だけ繰り返し
+    For Each mc2 In mc
+        ' 店番部分を抽出
+        re.Pattern = "<TH>((店番|母店):\d*.*)</TH>"
+        re.Global = True
+        Set mc3 = re.Execute(mc2.Value)
+        
+        For Each mc4 In mc3
+            Set mcsub = mc4.SubMatches ' SubMathesは検索パターンの()内に合致する部分
+            If mcsub.Count > 0 Then
+                vTenban(i) = mcsub.Item(0)
+            End If
+        Next
+        ' 住所部分を抽出
+        re.Pattern = "<TR class=address>[\s\S]*?<P>(.*?)</P></TD></TR>"
+        re.Global = True
+        'MsgBox (mc2.Value)
+        Set mc3 = re.Execute(mc2.Value)
+        For Each mc4 In mc3
+            Set mcsub = mc4.SubMatches
+            If mcsub.Count > 0 Then
+                vAddress(i) = mcsub.Item(0)
+            End If
+        Next
+        ' 店舗名の振り仮名部分を抽出
+        re.Pattern = "<TR class=tenpo_no[\s\S]*?>[\s\S]*?<SPAN>(.*?)</SPAN><BR><A href"
+        re.Global = True
+        Set mc3 = re.Execute(mc2.Value)
+        For Each mc4 In mc3
+            Set mcsub = mc4.SubMatches
+            If mcsub.Count > 0 Then
+                vFurigana(i) = mcsub.Item(0)
+            End If
+        Next
+        ' 店舗名部分を抽出
+        re.Pattern = "<TR class=tenpo_no[\s\S]*?<A href=.*?>(.*?)</A></TD></TR>"
+        re.Global = True
+        Set mc3 = re.Execute(mc2.Value)
+        For Each mc4 In mc3
+            Set mcsub = mc4.SubMatches
+            If mcsub.Count > 0 Then
+                vShopName(i) = mcsub.Item(0)
+            End If
+        Next
+        ' 店舗詳細へのリンクのURLを抽出
+        re.Pattern = "<P class=btn_detail.*?><A href=""(.*?)"".*?>"
+        re.Global = True
+        ' Debug.Print mc2.Value
+        Set mc3 = re.Execute(mc2.Value)
+        For Each mc4 In mc3
+            Set mcsub = mc4.SubMatches
+            If mcsub.Count > 0 Then
+                vShopURL(i) = "http://sasp.mapion.co.jp/" & mcsub.Item(0)
+                ' 指定したURLからページを取得
+                Set oDocument = oHTML.createDocumentFromUrl(vShopURL(i), vbNullString)
+                ' ステータスがcompleteになるまで待つ
+                Do While oDocument.readyState <> "complete"
+                    Application.Wait Now + TimeSerial(0, 0, 1)
+                    DoEvents
+                Loop
+                Debug.Print oDocument.body.innerHTML
+                ' 正規表現のパターン指定
+                re.Pattern = "<TH class=info_tb_title>TEL</TH>[\s\S\n]*?<TD class=info_tb_data>(.*?)</TD>"
+                re.Global = True
+                Set mc5 = re.Execute(oDocument.body.innerHTML)
+                For Each mc6 In mc5
+                    Set mcsub2 = mc6.SubMatches
+                    If mcsub2.Count > 0 Then
+                        vshoptel(i) = mcsub2.Item(0)
+                    End If
+                Next
+            End If
+        Next
+'スクリプト エラーのデバッグと通知は既定で無効です｡有効になっている場合は､次の手順に従って無効にしてください｡
+'Internet Explorer を開くには、[スタート] ボタン [スタート] ボタンの画像 をクリックして、[Internet Explorer] をクリックします。
+'[ツール] ボタン、[インターネット オプション] の順にクリックします。
+'[詳細設定] タブをクリックし、[スクリプトのデバッグを使用しない (Internet Explorer)] チェック ボックスと [スクリプトのデバッグを使用しない (その他)] チェック ボックスをオンにします。
+'[スクリプト エラーごとに通知を表示する] チェック ボックスをオフにして、[OK] をクリックします。
+        
+        i = i + 1
+    Next
+    ' 書き出し先は先頭から2番目のシート
+    ' シートをクリア
+    ThisWorkbook.Sheets(2).Cells.Clear
+    ' 各変数の配列を縦に並び変えて各列にセット
+    ThisWorkbook.Sheets(2).Range("A1:A" & i) = WorksheetFunction.Transpose(vTenban)
+    ThisWorkbook.Sheets(2).Range("B1:B" & i) = WorksheetFunction.Transpose(vShopName)
+    ThisWorkbook.Sheets(2).Range("C1:C" & i) = WorksheetFunction.Transpose(vFurigana)
+    ThisWorkbook.Sheets(2).Range("D1:D" & i) = WorksheetFunction.Transpose(vAddress)
+    ThisWorkbook.Sheets(2).Range("E1:E" & i) = WorksheetFunction.Transpose(vshoptel)
+    ThisWorkbook.Sheets(2).Range("F1:F" & i) = WorksheetFunction.Transpose(vShopURL)
+
+    ' オートフィット
+    ThisWorkbook.Sheets(2).Columns("A:F").EntireColumn.AutoFit
+    ' 書き出し先のシートを前に
+    ThisWorkbook.Sheets(2).Activate
+    'Debug.Print mc(0).SubMatches(0)
+ 
+
+End Sub
+Public Function ADOS_Decode_UTF8(ByRef bytIn() As Byte) As String
+    ADOS_Decode_UTF8 = ADOS_Decode("UTF-8", bytIn)
+End Function
+
+Private Function ADOS_Decode(ByVal cset As String, ByRef bytIn() As Byte) As String
+
+    Dim objStm As ADODB.Stream
+    Set objStm = New ADODB.Stream
+    objStm.Open
+    objStm.Type = adTypeBinary
+    objStm.Write bytIn
+
+    objStm.Position = 0
+    objStm.Type = adTypeText
+    objStm.Charset = cset
+    ADOS_Decode = objStm.ReadText()
+
+    objStm.Close
+    Set objStm = Nothing
+
+    Exit Function
+End Function
+Private Sub 参照設定を調べる()
+
+  Dim ref As Object
+
+  For Each ref In ThisWorkbook.VBProject.References
+    With ref
+
+      Debug.Print _
+        .Name & vbCrLf & _
+        .Description & vbCrLf & _
+        .FullPath & vbCrLf & _
+        .GUID & vbCrLf & _
+        .major & vbCrLf & _
+        .minor & vbCrLf & _
+        "----"
+
+    End With
+  Next ref
+
+End Sub
+Private Sub refSet()
+    
+    Dim ref
+    Dim refExists As Boolean
+    
+    ' WinHttp
+    ' Microsoft WinHTTP Services, version 5.1
+    refExists = False
+    For Each ref In ActiveWorkbook.VBProject.References
+        If ref.GUID = "{662901FC-6951-4854-9EB2-D9A2570F2B2E}" Then
+            refExists = True
+        End If
+    Next
+    If Not refExists Then
+        ActiveWorkbook.VBProject.References.AddFromGuid "{662901FC-6951-4854-9EB2-D9A2570F2B2E}", 5, 1
+    End If
+    
+    
+    ' MSHTML
+    ' Microsoft HTML Object Library
+    refExists = False
+    For Each ref In ActiveWorkbook.VBProject.References
+        If ref.GUID = "{3050F1C5-98B5-11CF-BB82-00AA00BDCE0B}" Then
+            refExists = True
+        End If
+    Next
+    If Not refExists Then
+        ActiveWorkbook.VBProject.References.AddFromGuid "{3050F1C5-98B5-11CF-BB82-00AA00BDCE0B}", 4, 0
+    End If
+    
+    
+    ' Script_RegExp_55
+    ' Microsoft VBScript Regular Expressions 5.5
+    refExists = False
+    For Each ref In ActiveWorkbook.VBProject.References
+        If ref.GUID = "{3F4DACA7-160D-11D2-A8E9-00104B365C9F}" Then
+            refExists = True
+        End If
+    Next
+    If Not refExists Then
+        ActiveWorkbook.VBProject.References.AddFromGuid "{3F4DACA7-160D-11D2-A8E9-00104B365C9F}", 5, 5
+    End If
+    ' ADODB
+    ' Microsoft ActiveX Data Objects 2.8 Library
+    refExists = False
+    For Each ref In ActiveWorkbook.VBProject.References
+        If ref.GUID = "{2A75196C-D9EB-4129-B803-931327F72D5C}" Then
+            refExists = True
+        End If
+    Next
+    If Not refExists Then
+        ActiveWorkbook.VBProject.References.AddFromGuid "{2A75196C-D9EB-4129-B803-931327F72D5C}", 2, 8
+    End If
+    MsgBox ("ライブラリ参照設定の追加が終了しました。")
+End Sub
+Public Function GetShopByCode(ByVal sShopCode As String) As Variant
+' 戻り値
+'    vReturn = Array(vTenban(0), vShopName(0), vFurigana(0), vAddress(0), vshoptel(0), vShopURL(0))
+
+
+#If EARLY_BINDING Then
+    Dim http    As WinHttp.WinHttpRequest
+    Dim re      As New RegExp
+    Dim mc      As MatchCollection
+    Dim mcsub   As SubMatches
+    Dim mcsub2   As SubMatches
+    Dim mc2      As Match
+    Dim mc3     As MatchCollection
+    Dim mc4      As Match
+    Dim mc5     As MatchCollection
+    Dim mc6     As Match
+#Else
+    Dim http    As Object
+    Dim re      As Object: Set re = CreateObject("RegExp")
+    Dim mc      As Object
+    Dim mcsub   As Object
+    Dim mcsub2   As Object
+    Dim mc2      As Object
+    Dim mc3      As Object
+    Dim mc4      As Object
+    Dim mc5      As Object
+    Dim mc6      As Object
+#End If
+
+    Dim vReturn As Variant
+    Dim sURI    As String
+    Dim sHTML   As String
+    Dim vHTML   As Variant
+    Dim i       As Long
+    Dim vTenban() As Variant
+    Dim vAddress() As Variant
+    Dim vFurigana() As Variant
+    Dim vShopName() As Variant
+    Dim vShopURL() As Variant
+    Dim sShopTEL As String
+    
+    
+    Dim oHTML As MSHTML.HTMLDocument
+    Set oHTML = New MSHTML.HTMLDocument
+    
+    Dim oDocument As MSHTML.HTMLDocument
+    
+    ' 引数の店番が3ケタの数字の場合はそのまま検索
+    ' 3ケタに満たない場合は先頭からゼロ埋め変換
+    ' 0で始まる4ケタの数字の場合は先頭0を除いた3ケタで検索
+    ' 0以外で始まる4ケタの数字の場合は店舗検索WEBでないところから情報取得
+    ' 上記以外の場合はNULL("")を返す
+    
+    ' 引数の店番チェック＆フォーマット
+    ' 数字でない場合はNULLで返す
+    If Not IsNumeric(sShopCode) Then
+        vReturn = Array("", "", "", "", "", "")
+        GetShopByCode = vReturn
+        Exit Function
+    ' 5桁以上の数字の場合はNULLで返す
+    ElseIf Len(sShopCode) > 4 Then
+        vReturn = Array("", "", "", "", "", "")
+        GetShopByCode = vReturn
+        Exit Function
+    ElseIf Len(sShopCode) = 4 Then
+    ' 0以外で始まる4桁の場合はWEB以外から取得
+        If Left(sShopCode, 1) <> "0" Then
+            ' vReturn = GetOtherShopByCode(sShopCode)
+            vReturn = Array("", "", "", "", "", "")
+            GetShopByCode = vReturn
+            Exit Function
+    ' 0で始まる4桁の場合は3桁に変換してWEBから取得
+        Else
+            sShopCode = Mid(sShopCode, 2, 3)
+        End If
+    ElseIf Len(sShopCode) = 2 Or Len(sShopCode) = 1 Then
+    ' 2桁または1桁の場合は先頭0埋めしてWEBから取得
+        sShopCode = Format(sShopCode, "000")
+    ' このElseは3桁
+    Else
+        sShopCode = sShopCode
+    End If
+    
+    ' 前回コールされた店番の場合はキャッシュから値をセットしてリターン
+    With ShopInfo
+        If sShopCode = .paramShopCode.Value Then
+            vReturn = Array(.txtShopCode.Value, .txtShopName.Value, .txtFurigana.Value, .txtAddress.Value, .txtTEL.Value, .txtURL.Value)
+            GetShopByCode = vReturn
+            Exit Function
+        End If
+    End With
+    
+    ' 対象URLを指定（店番を付加)
+    sURI = "http://sasp.mapion.co.jp/b/bk_mufg/attr/?shop_number=%5E" & sShopCode
+    ' 指定したURLからページを取得
+    Set oDocument = oHTML.createDocumentFromUrl(sURI, vbNullString)
+    ' ステータスがcompleteになるまで待つ
+    Do While oDocument.readyState <> "complete"
+        Application.Wait Now + TimeSerial(0, 0, 1)
+        DoEvents
+    Loop
+    
+    
+    
+    ' Debug.Print oDocument.body.innerHTML
+    '// HTML ソースを変数に格納
+    sHTML = oDocument.body.innerHTML
+    'sHTML = ADOS_Decode_UTF8(oDocument.body.innerHTML)
+
+    ' 各店舗の詳細記述を取得
+    re.Pattern = "<TABLE class=tenpo_detail cellSpacing=0 sizcache=""\d*"" sizset=""\d*"">([\s\S]*?)</TABLE>"
+    ' Global:全件検索
+    re.Global = True
+    ' 正規表現による検索の実行
+    Set mc = re.Execute(sHTML)
+    
+    If mc.Count = 0 Then
+        vReturn = Array(sShopCode, "", "", "", "", "")
+        GetShopByCode = vReturn
+        Exit Function
+    End If
+    ' 変数の配列の要素数を設定
+    ReDim vTenban(mc.Count - 1)
+    ReDim vAddress(mc.Count - 1)
+    ReDim vFurigana(mc.Count - 1)
+    ReDim vShopName(mc.Count - 1)
+    ReDim vShopURL(mc.Count - 1)
+    ReDim vshoptel(mc.Count - 1)
+    i = 0
+    ' 検索された件数だけ繰り返し
+    For Each mc2 In mc
+        ' 店番部分を抽出
+        re.Pattern = "<TH>((店番|母店):\d*.*)</TH>"
+        re.Global = True
+        Set mc3 = re.Execute(mc2.Value)
+        
+        For Each mc4 In mc3
+            Set mcsub = mc4.SubMatches ' SubMathesは検索パターンの()内に合致する部分
+            If mcsub.Count > 0 Then
+                vTenban(i) = mcsub.Item(0)
+            End If
+        Next
+        ' 住所部分を抽出
+        re.Pattern = "<TR class=address>[\s\S]*?<P>(.*?)</P></TD></TR>"
+        re.Global = True
+        'MsgBox (mc2.Value)
+        Set mc3 = re.Execute(mc2.Value)
+        For Each mc4 In mc3
+            Set mcsub = mc4.SubMatches
+            If mcsub.Count > 0 Then
+                vAddress(i) = mcsub.Item(0)
+            End If
+        Next
+        ' 店舗名の振り仮名部分を抽出
+        re.Pattern = "<TR class=tenpo_no[\s\S]*?>[\s\S]*?<SPAN>(.*?)</SPAN><BR><A href"
+        re.Global = True
+        Set mc3 = re.Execute(mc2.Value)
+        For Each mc4 In mc3
+            Set mcsub = mc4.SubMatches
+            If mcsub.Count > 0 Then
+                vFurigana(i) = mcsub.Item(0)
+            End If
+        Next
+        ' 店舗名部分を抽出
+        re.Pattern = "<TR class=tenpo_no[\s\S]*?<A href=.*?>(.*?)</A></TD></TR>"
+        re.Global = True
+        Set mc3 = re.Execute(mc2.Value)
+        For Each mc4 In mc3
+            Set mcsub = mc4.SubMatches
+            If mcsub.Count > 0 Then
+                vShopName(i) = mcsub.Item(0)
+            End If
+        Next
+        ' 店舗詳細へのリンクのURLを抽出
+        re.Pattern = "<P class=btn_detail.*?><A href=""(.*?)"".*?>"
+        re.Global = True
+        ' Debug.Print mc2.Value
+        Set mc3 = re.Execute(mc2.Value)
+        For Each mc4 In mc3
+            Set mcsub = mc4.SubMatches
+            If mcsub.Count > 0 Then
+                vShopURL(i) = "http://sasp.mapion.co.jp/" & mcsub.Item(0)
+                ' 指定したURLからページを取得
+                Set oDocument = oHTML.createDocumentFromUrl(vShopURL(i), vbNullString)
+                ' ステータスがcompleteになるまで待つ
+                Do While oDocument.readyState <> "complete"
+                    Application.Wait Now + TimeSerial(0, 0, 1)
+                    DoEvents
+                Loop
+                Debug.Print oDocument.body.innerHTML
+                ' 正規表現のパターン指定
+                re.Pattern = "<TH class=info_tb_title>TEL</TH>[\s\S\n]*?<TD class=info_tb_data>(.*?)</TD>"
+                re.Global = True
+                Set mc5 = re.Execute(oDocument.body.innerHTML)
+                For Each mc6 In mc5
+                    Set mcsub2 = mc6.SubMatches
+                    If mcsub2.Count > 0 Then
+                        vshoptel(i) = mcsub2.Item(0)
+                    End If
+                Next
+            End If
+        Next
+'スクリプト エラーのデバッグと通知は既定で無効です｡有効になっている場合は､次の手順に従って無効にしてください｡
+'Internet Explorer を開くには、[スタート] ボタン [スタート] ボタンの画像 をクリックして、[Internet Explorer] をクリックします。
+'[ツール] ボタン、[インターネット オプション] の順にクリックします。
+'[詳細設定] タブをクリックし、[スクリプトのデバッグを使用しない (Internet Explorer)] チェック ボックスと [スクリプトのデバッグを使用しない (その他)] チェック ボックスをオンにします。
+'[スクリプト エラーごとに通知を表示する] チェック ボックスをオフにして、[OK] をクリックします。
+        
+        i = i + 1
+        If i > 0 Then
+            Exit For
+        End If
+    Next
+'    ' 書き出し先は先頭から2番目のシート
+'    ' シートをクリア
+'    ThisWorkbook.Sheets(2).Cells.Clear
+'    ' 各変数の配列を縦に並び変えて各列にセット
+'    ThisWorkbook.Sheets(2).Range("A1:A" & i) = WorksheetFunction.Transpose(vTenban)
+'    ThisWorkbook.Sheets(2).Range("B1:B" & i) = WorksheetFunction.Transpose(vShopName)
+'    ThisWorkbook.Sheets(2).Range("C1:C" & i) = WorksheetFunction.Transpose(vFurigana)
+'    ThisWorkbook.Sheets(2).Range("D1:D" & i) = WorksheetFunction.Transpose(vAddress)
+'    ThisWorkbook.Sheets(2).Range("E1:E" & i) = WorksheetFunction.Transpose(vShopTEL)
+'    ThisWorkbook.Sheets(2).Range("F1:F" & i) = WorksheetFunction.Transpose(vShopURL)
+'
+'    ' オートフィット
+'    ThisWorkbook.Sheets(2).Columns("A:F").EntireColumn.AutoFit
+'    ' 書き出し先のシートを前に
+'    ThisWorkbook.Sheets(2).Activate
+'    'Debug.Print mc(0).SubMatches(0)
+    With ShopInfo
+        .paramShopCode = sShopCode
+        .txtShopCode = vTenban(0)
+        .txtShopName = vShopName(0)
+        .txtFurigana = vFurigana(0)
+        .txtAddress = vAddress(0)
+        .txtTEL = vshoptel(0)
+        .txtURL = vShopURL(0)
+    End With
+    
+    vReturn = Array(vTenban(0), vShopName(0), vFurigana(0), vAddress(0), vshoptel(0), vShopURL(0))
+    GetShopByCode = vReturn
+
+End Function
+
+Public Function getshopname(ByVal sShopCode As String) As String
+'
+'    vReturn = Array(vTenban(0), vShopName(0), vFurigana(0), vAddress(0), vshoptel(0), vShopURL(0))
+    Dim vReturn As Variant
+    vReturn = GetShopByCode(sShopCode)
+    getshopname = vReturn(1)
+    
+End Function
+Public Function getshopaddress(ByVal sShopCode As String) As String
+'
+'    vReturn = Array(vTenban(0), vShopName(0), vFurigana(0), vAddress(0), vshoptel(0), vShopURL(0))
+    Dim vReturn As Variant
+    vReturn = GetShopByCode(sShopCode)
+    getshopaddress = vReturn(3)
+    
+End Function
+Public Function getshoptel(ByVal sShopCode As String) As String
+'
+'    vReturn = Array(vTenban(0), vShopName(0), vFurigana(0), vAddress(0), vshoptel(0), vShopURL(0))
+    Dim vReturn As Variant
+    vReturn = GetShopByCode(sShopCode)
+    getshoptel = vReturn(4)
+    
+End Function
+Public Function getshopfurigana(ByVal sShopCode As String) As String
+'
+'    vReturn = Array(vTenban(0), vShopName(0), vFurigana(0), vAddress(0), vshoptel(0), vShopURL(0))
+    Dim vReturn As Variant
+    vReturn = GetShopByCode(sShopCode)
+    getshopfurigana = vReturn(2)
+    
+End Function
+Public Function getshopurl(ByVal sShopCode As String) As String
+'
+'    vReturn = Array(vTenban(0), vShopName(0), vFurigana(0), vAddress(0), vshoptel(0), vShopURL(0))
+    Dim vReturn As Variant
+    vReturn = GetShopByCode(sShopCode)
+    getshopurl = vReturn(5)
+    
+End Function
+
+
+Private Sub test()
+'    Dim ret As Variant
+    Dim ret As String
+    ret = getshopname("111")
+    Debug.Print ret
+    ret = getshopaddress("111")
+    Debug.Print ret
+    ret = getshoptel("111")
+    Debug.Print ret
+    
+'    Debug.Print ret(0)
+'    Debug.Print ret(1)
+'    Debug.Print ret(2)
+'
+'    Debug.Print ret(3)
+'    Debug.Print ret(4)
+'    Debug.Print ret(5)
+'
+
+
+End Sub
+
+
+
+
